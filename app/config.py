@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    storage_dir: str = "./data"
+    storage_dir: str = "./data/recordings"
     nats_url: str = "nats://localhost:4222"
     nats_subject: str = "audio.ingested"
     auth_username: str = "admin"
