@@ -36,6 +36,14 @@ async def lifespan(app: FastAPI):
     logger.info(f"Connecting to NATS at {settings.nats_url}")
     await nc.connect(settings.nats_url, connect_timeout=10)
     logger.info("Connected to NATS")
+    
+    js = nc.jetstream()
+    try:
+        await js.add_stream(name="audio_events", subjects=[settings.nats_subject])
+        logger.info("JetStream stream 'audio_events' ensured")
+    except Exception as e:
+        logger.info(f"Stream may already exist or cannot be modified: {e}")
+
     # create storage dir if it doesn't exist
     os.makedirs(settings.storage_dir, exist_ok=True)
     logger.info(f"Ensured storage directory exists at {settings.storage_dir}")
@@ -70,13 +78,14 @@ async def upload_audio(
         logger.error(f"Failed to save file {file.filename}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
         
-    # Publish filename to NATS
+    # Publish filename to NATS JetStream
     try:
         payload = json.dumps({"filename": file.filename}).encode("utf-8")
-        await nc.publish(settings.nats_subject, payload)
-        logger.debug(f"Published NATS message for file '{file.filename}' to subject '{settings.nats_subject}'")
+        js = nc.jetstream()
+        await js.publish(settings.nats_subject, payload)
+        logger.debug(f"Published NATS JetStream message for file '{file.filename}' to subject '{settings.nats_subject}'")
     except Exception as e:
-        logger.error(f"Failed to publish NATS message for file '{file.filename}': {e}", exc_info=True)
+        logger.error(f"Failed to publish NATS JetStream message for file '{file.filename}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to publish to message broker")
     
     return {"message": "File uploaded successfully", "filename": file.filename}
