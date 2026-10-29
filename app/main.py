@@ -121,6 +121,6 @@ def ingest_usage_events(batch: UsageEventBatch):
             "device_id TEXT NOT NULL, timestamp INTEGER NOT NULL, package TEXT NOT NULL, event_type TEXT NOT NULL, "
             "PRIMARY KEY (device_id, timestamp, package, event_type))"
         )
-        inserted = conn.executemany("INSERT OR IGNORE INTO usage_events VALUES (?, ?, ?, ?)", rows).rowcount
+        inserted = conn.executemany("INSERT OR IGNORE INTO usage_events (device_id, timestamp, package, event_type) VALUES (?, ?, ?, ?)", rows).rowcount
     logger.info(f"Usage events from device '{batch.device_id}': {len(rows)} received, {inserted} new")
     return {"received": len(rows), "inserted": inserted}

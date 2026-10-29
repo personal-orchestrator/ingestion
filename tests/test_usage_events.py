@@ -1,11 +1,14 @@
 import os
 import sqlite3
+from contextlib import closing
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
 from app.config import settings
 from app.main import app
+
+AUTH = {"Authorization": f"Bearer {settings.usage_token}"}
 
 BATCH = {
     "device_id": "pixel-1",
@@ -27,14 +30,14 @@ async def async_client():
         yield client
 
 def stored_rows():
-    with sqlite3.connect(os.path.join(settings.storage_dir, "usage_events.db")) as conn:
+    with closing(sqlite3.connect(os.path.join(settings.storage_dir, "usage_events.db"))) as conn:
         return conn.execute("SELECT device_id, timestamp, package, event_type FROM usage_events ORDER BY timestamp").fetchall()
 
 @pytest.mark.asyncio
 async def test_usage_events_are_stored(async_client: AsyncClient):
     response = await async_client.post(
         "/usage-events",
-        headers={"Authorization": f"Bearer {settings.usage_token}"},
+        headers=AUTH,
         json=BATCH,
     )
 
@@ -48,8 +51,7 @@ async def test_usage_events_are_stored(async_client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_resending_overlapping_batch_stores_only_new_events(async_client: AsyncClient):
-    headers = {"Authorization": f"Bearer {settings.usage_token}"}
-    await async_client.post("/usage-events", headers=headers, json=BATCH)
+    await async_client.post("/usage-events", headers=AUTH, json=BATCH)
 
     overlapping = {
         "device_id": "pixel-1",
@@ -57,7 +59,7 @@ async def test_resending_overlapping_batch_stores_only_new_events(async_client: 
             {"timestamp": 1003, "package": "com.example.chat", "event_type": "ACTIVITY_PAUSED"},
         ],
     }
-    response = await async_client.post("/usage-events", headers=headers, json=overlapping)
+    response = await async_client.post("/usage-events", headers=AUTH, json=overlapping)
 
     assert response.status_code == 200
     assert response.json() == {"received": 4, "inserted": 1}
