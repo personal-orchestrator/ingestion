@@ -5,10 +5,10 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
-from app.config import settings
+from app.config import Settings, settings
 from app.main import app
 
-AUTH = {"Authorization": f"Bearer {settings.usage_token}"}
+AUTH = {"Authorization": "Bearer test-token"}
 
 BATCH = {
     "device_id": "pixel-1",
@@ -20,8 +20,9 @@ BATCH = {
 }
 
 @pytest.fixture(autouse=True)
-def storage_dir(tmp_path):
+def configure(tmp_path):
     settings.storage_dir = str(tmp_path)
+    settings.usage_token = "test-token"
     yield
 
 @pytest_asyncio.fixture
@@ -82,3 +83,11 @@ async def test_usage_events_reject_watch_credentials(async_client: AsyncClient):
         json=BATCH,
     )
     assert response.status_code == 401
+
+@pytest.mark.asyncio
+async def test_usage_events_reject_everything_when_token_unset(async_client: AsyncClient):
+    settings.usage_token = Settings.model_fields["usage_token"].default
+
+    for header in ("Bearer secret", "Bearer "):
+        response = await async_client.post("/usage-events", headers={"Authorization": header}, json=BATCH)
+        assert response.status_code == 401
