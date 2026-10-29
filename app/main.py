@@ -2,11 +2,13 @@ import os
 import json
 import secrets
 import logging
+import sqlite3
 from typing import Annotated
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 import nats
 from nats.aio.client import Client as NATS
 
@@ -17,6 +19,7 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 security = HTTPBasic()
+bearer = HTTPBearer()
 nc: NATS = nats.NATS()
 
 def get_current_username(credentials: Annotated[HTTPBasicCredentials, Depends(security)]):
@@ -30,6 +33,15 @@ def get_current_username(credentials: Annotated[HTTPBasicCredentials, Depends(se
             headers={"WWW-Authenticate": "Basic"},
         )
     return credentials.username
+
+def verify_usage_token(credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)]):
+    if not secrets.compare_digest(credentials.credentials, settings.usage_token):
+        logger.warning("Failed usage token authentication attempt")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -89,3 +101,26 @@ async def upload_audio(
         raise HTTPException(status_code=500, detail=f"Failed to publish to message broker")
     
     return {"message": "File uploaded successfully", "filename": file.filename}
+
+class UsageEvent(BaseModel):
+    timestamp: int
+    package: str
+    event_type: str
+
+class UsageEventBatch(BaseModel):
+    device_id: str
+    events: list[UsageEvent]
+
+@app.post("/usage-events", dependencies=[Depends(verify_usage_token)])
+def ingest_usage_events(batch: UsageEventBatch):
+    rows = [(batch.device_id, e.timestamp, e.package, e.event_type) for e in batch.events]
+    db_path = os.path.join(settings.storage_dir, "usage_events.db")
+    with closing(sqlite3.connect(db_path)) as conn, conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_events ("
+            "device_id TEXT NOT NULL, timestamp INTEGER NOT NULL, package TEXT NOT NULL, event_type TEXT NOT NULL, "
+            "PRIMARY KEY (device_id, timestamp, package, event_type))"
+        )
+        inserted = conn.executemany("INSERT OR IGNORE INTO usage_events VALUES (?, ?, ?, ?)", rows).rowcount
+    logger.info(f"Usage events from device '{batch.device_id}': {len(rows)} received, {inserted} new")
+    return {"received": len(rows), "inserted": inserted}
