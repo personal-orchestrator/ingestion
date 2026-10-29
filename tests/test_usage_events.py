@@ -20,10 +20,9 @@ BATCH = {
 }
 
 @pytest.fixture(autouse=True)
-def configure(tmp_path):
-    settings.storage_dir = str(tmp_path)
-    settings.usage_token = "test-token"
-    yield
+def configure(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "storage_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "usage_token", "test-token")
 
 @pytest_asyncio.fixture
 async def async_client():
