@@ -6,10 +6,12 @@ import sqlite3
 from typing import Annotated
 from contextlib import asynccontextmanager, closing
 
-from fastapi import FastAPI, Depends, HTTPException, Request, status, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, ValidationError
+from starlette.datastructures import UploadFile
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 import nats
 from nats.aio.client import Client as NATS
 
@@ -23,7 +25,7 @@ security = HTTPBasic()
 bearer = HTTPBearer()
 nc: NATS = nats.NATS()
 
-MAX_USAGE_BODY_BYTES = 10 * 1024 * 1024
+MAX_BODY_BYTES = 100 * 1024 * 1024  # must fit the longest recordings (63 MB so far)
 MAX_USAGE_EVENTS = 100_000
 MAX_USAGE_TEXT_LENGTH = 1024
 
@@ -85,11 +87,22 @@ async def lifespan(app: FastAPI):
         await nc.close()
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_BODY_BYTES)
+
+async def read_upload_file(request: Request):
+    # A dependency rather than a File parameter: FastAPI parses those before any dependency runs, auth included
+    # max_fields=0 stops a text field named "file" reaching the handler as a str
+    async with request.form(max_files=1, max_fields=0) as form:
+        file = form.get("file")
+        if file is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Missing file")
+        yield file
 
 @app.post("/upload")
 async def upload_audio(
-    file: UploadFile = File(...),
-    username: str = Depends(get_current_username)
+    # Dependencies run in this order, so auth has to stay first
+    username: Annotated[str, Depends(get_current_username)],
+    file: Annotated[UploadFile, Depends(read_upload_file)],
 ):
     logger.info(f"Upload request received from user '{username}' for file {file.filename!r}")
     if file.filename != os.path.basename(file.filename) or not file.filename.endswith(".m4a"):
@@ -134,13 +147,8 @@ class UsageEventBatch(BaseModel):
 
 async def read_usage_batch(request: Request) -> UsageEventBatch:
     # A dependency rather than a body parameter: FastAPI parses those before any dependency runs, auth included
-    body = bytearray()
-    async for chunk in request.stream():
-        body += chunk
-        if len(body) > MAX_USAGE_BODY_BYTES:
-            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Request body too large")
     try:
-        return UsageEventBatch.model_validate_json(body)
+        return UsageEventBatch.model_validate_json(await request.body())
     except ValidationError as e:
         raise RequestValidationError(e.errors(include_input=False, include_context=False))
 

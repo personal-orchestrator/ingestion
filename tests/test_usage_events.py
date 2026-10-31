@@ -5,7 +5,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.config import Settings, settings
-from app.main import MAX_USAGE_BODY_BYTES, MAX_USAGE_EVENTS, MAX_USAGE_TEXT_LENGTH
+from app.main import MAX_BODY_BYTES, MAX_USAGE_EVENTS, MAX_USAGE_TEXT_LENGTH
 
 AUTH = {"Authorization": "Bearer test-token", "Content-Type": "application/json"}
 
@@ -146,7 +146,7 @@ async def test_usage_events_reject_too_many_events(async_client: AsyncClient):
 @pytest.mark.asyncio
 async def test_oversized_usage_body_is_rejected(async_client: AsyncClient):
     async def chunks():
-        yield b" " * MAX_USAGE_BODY_BYTES
+        yield b" " * MAX_BODY_BYTES
         yield b" "
 
     response = await async_client.post("/usage-events", headers=AUTH, content=chunks())

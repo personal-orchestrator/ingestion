@@ -5,6 +5,7 @@ import nats
 from httpx import AsyncClient
 
 from app.config import settings
+from app.main import MAX_BODY_BYTES
 
 @pytest.mark.asyncio
 async def test_upload_audio_success(async_client: AsyncClient):
@@ -78,6 +79,59 @@ async def test_upload_audio_rejects_unsafe_filename(async_client: AsyncClient, t
 
     assert response.status_code == 400
     assert sorted(os.listdir(tmp_path)) == ["recordings", "usage"]
+    assert os.listdir(settings.storage_dir) == []
+
+@pytest.mark.asyncio
+async def test_upload_body_is_not_parsed_before_auth(async_client: AsyncClient):
+    response = await async_client.post(
+        "/upload",
+        auth=("wrong", "password"),
+        headers={"Content-Type": "multipart/form-data"},
+        content=b"no boundary, so this cannot be parsed"
+    )
+    assert response.status_code == 401
+
+@pytest.mark.asyncio
+async def test_upload_rejects_more_than_one_file(async_client: AsyncClient):
+    part = ("test.m4a", b"dummy", "audio/mp4")
+
+    response = await async_client.post(
+        "/upload",
+        auth=(settings.auth_username, settings.auth_password),
+        files=[("file", part), ("file", part)]
+    )
+
+    assert response.status_code == 400
+    assert os.listdir(settings.storage_dir) == []
+
+@pytest.mark.asyncio
+async def test_upload_rejects_text_fields(async_client: AsyncClient):
+    response = await async_client.post(
+        "/upload",
+        auth=(settings.auth_username, settings.auth_password),
+        data={"file": "not a file"},
+        files={"other": ("test.m4a", b"dummy", "audio/mp4")}
+    )
+    assert response.status_code == 400
+
+@pytest.mark.asyncio
+async def test_upload_requires_file_field(async_client: AsyncClient):
+    response = await async_client.post(
+        "/upload",
+        auth=(settings.auth_username, settings.auth_password),
+        files={"other": ("test.m4a", b"dummy", "audio/mp4")}
+    )
+    assert response.status_code == 422
+
+@pytest.mark.asyncio
+async def test_oversized_upload_is_rejected(async_client: AsyncClient):
+    response = await async_client.post(
+        "/upload",
+        auth=(settings.auth_username, settings.auth_password),
+        files={"file": ("test.m4a", b"x" * (MAX_BODY_BYTES + 1), "audio/mp4")}
+    )
+
+    assert response.status_code == 413
     assert os.listdir(settings.storage_dir) == []
 
 @pytest.mark.asyncio
