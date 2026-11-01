@@ -78,7 +78,7 @@ async def test_upload_audio_rejects_unsafe_filename(async_client: AsyncClient, t
     )
 
     assert response.status_code == 400
-    assert sorted(os.listdir(tmp_path)) == ["recordings", "usage"]
+    assert sorted(os.listdir(tmp_path)) == ["health", "recordings", "usage"]
     assert os.listdir(settings.storage_dir) == []
 
 @pytest.mark.asyncio
