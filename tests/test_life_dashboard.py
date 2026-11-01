@@ -2,6 +2,7 @@ import glob
 import hashlib
 import json
 import os
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
@@ -35,7 +36,9 @@ async def test_payload_is_stored_as_received(async_client: AsyncClient):
     assert response.status_code == 204
     [path] = stored_files()
     assert read_file(path) == SYNC_BODY
-    assert os.path.basename(path) == f"{hashlib.sha256(SYNC_BODY).hexdigest()}.json"
+    assert os.path.relpath(path, settings.health_dir) == os.path.join(
+        datetime.now(UTC).date().isoformat(), f"{hashlib.sha256(SYNC_BODY).hexdigest()}.json"
+    )
 
 @pytest.mark.asyncio
 async def test_directory_exists_after_startup(async_client: AsyncClient):
