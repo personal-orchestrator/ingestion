@@ -173,7 +173,7 @@ def ingest_usage_events(batch: Annotated[UsageEventBatch, Depends(read_usage_bat
     return {"received": len(rows), "inserted": inserted}
 
 async def read_raw_body(request: Request) -> bytes:
-    # A dependency rather than a body parameter: FastAPI parses those before any dependency runs, auth included
+    # After auth, as with read_usage_batch; awaited here so the handler can stay sync and write off the event loop
     return await request.body()
 
 def is_test_ping(body: bytes) -> bool:

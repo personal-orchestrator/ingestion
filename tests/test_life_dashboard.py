@@ -96,7 +96,7 @@ async def test_life_dashboard_token_is_rejected_on_usage_events(async_client: As
     assert response.status_code == 401
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body", [b"not json", b"[1, 2]", b'"text"', b"\xff\xfe", b""],
+@pytest.mark.parametrize("body", [b"not json", b"[1, 2]", b'"text"', b"\xc3\x28", b""],
                          ids=["malformed", "array", "string", "invalid-utf8", "empty"])
 async def test_body_that_is_not_a_payload_is_still_stored(async_client: AsyncClient, body):
     response = await async_client.post("/life-dashboard", headers=AUTH, content=body)
