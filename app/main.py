@@ -41,14 +41,17 @@ def get_current_username(credentials: Annotated[HTTPBasicCredentials, Depends(se
         )
     return credentials.username
 
-def verify_usage_token(credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)]):
-    if not secrets.compare_digest(credentials.credentials.encode(), settings.usage_token.encode()):
-        logger.warning("Failed usage token authentication attempt")
+def require_bearer_token(credentials: HTTPAuthorizationCredentials, expected: str, name: str):
+    if not secrets.compare_digest(credentials.credentials.encode(), expected.encode()):
+        logger.warning(f"Failed {name} token authentication attempt")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+def verify_usage_token(credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)]):
+    require_bearer_token(credentials, settings.usage_token, "usage")
 
 def usage_db_path() -> str:
     return os.path.join(settings.usage_dir, "usage_events.db")
