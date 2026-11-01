@@ -183,17 +183,26 @@ def is_test_ping(body: bytes) -> bool:
         payload = json.loads(body)
     except ValueError:
         return False
-    return isinstance(payload, dict) and bool(payload.get("test"))
+    return isinstance(payload, dict) and payload.get("test") is True
 
-@app.post("/life-dashboard", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verify_life_dashboard_token)])
-def ingest_life_dashboard(body: Annotated[bytes, Depends(read_raw_body)]):
-    if is_test_ping(body):
-        return
+def store_health_payload(body: bytes) -> str:
     day_dir = os.path.join(settings.health_dir, datetime.now(UTC).date().isoformat())
     os.makedirs(day_dir, exist_ok=True)
     path = os.path.join(day_dir, f"{hashlib.sha256(body).hexdigest()}.json")
     tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
-    with open(tmp_path, "wb") as f:
-        f.write(body)
-    os.replace(tmp_path, path)
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(body)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    return path
+
+@app.post("/life-dashboard", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verify_life_dashboard_token)])
+def ingest_life_dashboard(body: Annotated[bytes, Depends(read_raw_body)]):
+    if is_test_ping(body):
+        logger.info("Life dashboard test ping received, nothing stored")
+        return
+    path = store_health_payload(body)
     logger.info(f"Life dashboard payload of {len(body)} bytes stored as {path}")

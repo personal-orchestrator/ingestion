@@ -31,14 +31,16 @@ def read_file(path):
 
 @pytest.mark.asyncio
 async def test_payload_is_stored_as_received(async_client: AsyncClient):
+    day_before = datetime.now(UTC).date().isoformat()
     response = await async_client.post("/life-dashboard", headers=AUTH, content=SYNC_BODY)
+    day_after = datetime.now(UTC).date().isoformat()
 
     assert response.status_code == 204
     [path] = stored_files()
     assert read_file(path) == SYNC_BODY
-    assert os.path.relpath(path, settings.health_dir) == os.path.join(
-        datetime.now(UTC).date().isoformat(), f"{hashlib.sha256(SYNC_BODY).hexdigest()}.json"
-    )
+    day, filename = os.path.split(os.path.relpath(path, settings.health_dir))
+    assert day in (day_before, day_after)
+    assert filename == f"{hashlib.sha256(SYNC_BODY).hexdigest()}.json"
 
 @pytest.mark.asyncio
 async def test_directory_exists_after_startup(async_client: AsyncClient):
@@ -57,6 +59,15 @@ async def test_ping_stores_nothing(async_client: AsyncClient):
 
     assert response.status_code == 204
     assert stored_files() == []
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [b'{"test": false}', b'{"test": 1}', b'{"test": "false"}'],
+                         ids=["false", "number", "string"])
+async def test_small_body_with_other_test_value_is_stored(async_client: AsyncClient, body):
+    response = await async_client.post("/life-dashboard", headers=AUTH, content=body)
+
+    assert response.status_code == 204
+    assert len(stored_files()) == 1
 
 @pytest.mark.asyncio
 async def test_body_above_ping_size_is_stored_despite_test_field(async_client: AsyncClient):
@@ -79,6 +90,21 @@ async def test_bad_token_is_rejected(async_client: AsyncClient, headers):
 
     assert response.status_code == 401
     assert stored_files() == []
+
+@pytest.mark.asyncio
+async def test_body_is_not_read_before_auth(async_client: AsyncClient):
+    chunks_read = []
+
+    async def body():
+        chunks_read.append(SYNC_BODY)
+        yield SYNC_BODY
+
+    # FastAPI only parses a body parameter as JSON, so without this header the test would pass on unsafe code too
+    headers = {"Authorization": "Bearer wrong-token", "Content-Type": "application/json"}
+    response = await async_client.post("/life-dashboard", headers=headers, content=body())
+
+    assert response.status_code == 401
+    assert chunks_read == []
 
 @pytest.mark.asyncio
 async def test_unset_token_rejects_everything(async_client: AsyncClient, monkeypatch):
@@ -114,3 +140,14 @@ async def test_ten_mib_body_is_stored(async_client: AsyncClient):
     assert response.status_code == 204
     [path] = stored_files()
     assert os.path.getsize(path) == len(body)
+
+@pytest.mark.asyncio
+async def test_failed_write_leaves_no_temp_file(async_client: AsyncClient, monkeypatch):
+    def fail(*args):
+        raise OSError("disk full")
+    monkeypatch.setattr(os, "replace", fail)
+
+    with pytest.raises(OSError):
+        await async_client.post("/life-dashboard", headers=AUTH, content=SYNC_BODY)
+
+    assert stored_files() == []

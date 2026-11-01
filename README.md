@@ -9,7 +9,7 @@ capture only: nothing reads these files yet. In the app, set the URL on the Heal
 `Authorization: Bearer <LIFE_DASHBOARD_TOKEN>` under Webhook Headers. An unset token rejects everything.
 
 Each payload is written unparsed to `{HEALTH_DIR}/YYYY-MM-DD/<sha256 of the body>.json`, one payload per
-file, and answered with 204. A body of 1 KiB or less with a truthy `test` field is a ping and stores nothing.
+file, and answered with 204. A body of 1 KiB or less with `"test": true` is a ping and stores nothing.
 
 The app's Screen Time tab stays off, so the folder holds health data only. The endpoint does not branch on
 `source`: if that tab is ever pointed here, its payloads land in the same folder. `transcription-worker` and
