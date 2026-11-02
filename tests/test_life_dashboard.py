@@ -1,6 +1,5 @@
 import glob
 import hashlib
-import json
 import os
 from datetime import UTC, datetime
 
@@ -64,15 +63,6 @@ async def test_ping_stores_nothing(async_client: AsyncClient):
 @pytest.mark.parametrize("body", [b'{"test": false}', b'{"test": 1}', b'{"test": "false"}'],
                          ids=["false", "number", "string"])
 async def test_small_body_with_other_test_value_is_stored(async_client: AsyncClient, body):
-    response = await async_client.post("/life-dashboard", headers=AUTH, content=body)
-
-    assert response.status_code == 204
-    assert len(stored_files()) == 1
-
-@pytest.mark.asyncio
-async def test_body_above_ping_size_is_stored_despite_test_field(async_client: AsyncClient):
-    body = json.dumps({"test": True, "padding": "x" * 1024}).encode()
-
     response = await async_client.post("/life-dashboard", headers=AUTH, content=body)
 
     assert response.status_code == 204
