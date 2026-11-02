@@ -30,6 +30,7 @@ def setup_env(nats_server, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "nats_url", f"nats://{host}:{port}")
     monkeypatch.setattr(settings, "storage_dir", str(tmp_path / "recordings"))
     monkeypatch.setattr(settings, "usage_dir", str(tmp_path / "usage"))
+    monkeypatch.setattr(settings, "health_dir", str(tmp_path / "health"))
 
 @pytest_asyncio.fixture
 async def async_client():

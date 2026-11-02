@@ -1,8 +1,11 @@
 import os
 import json
+import uuid
+import hashlib
 import secrets
 import logging
 import sqlite3
+from datetime import UTC, datetime
 from typing import Annotated
 from contextlib import asynccontextmanager, closing
 
@@ -28,6 +31,7 @@ nc: NATS = nats.NATS()
 MAX_BODY_BYTES = 100 * 1024 * 1024  # must fit the longest recordings (63 MB so far)
 MAX_USAGE_EVENTS = 100_000
 MAX_USAGE_TEXT_LENGTH = 1024
+MAX_PING_BYTES = 1024  # the Life Dashboard ping is about 130 bytes
 
 def get_current_username(credentials: Annotated[HTTPBasicCredentials, Depends(security)]):
     correct_username = secrets.compare_digest(credentials.username.encode(), settings.auth_username.encode())
@@ -41,14 +45,20 @@ def get_current_username(credentials: Annotated[HTTPBasicCredentials, Depends(se
         )
     return credentials.username
 
-def verify_usage_token(credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)]):
-    if not secrets.compare_digest(credentials.credentials.encode(), settings.usage_token.encode()):
-        logger.warning("Failed usage token authentication attempt")
+def require_bearer_token(credentials: HTTPAuthorizationCredentials, expected: str, name: str):
+    if not secrets.compare_digest(credentials.credentials.encode(), expected.encode()):
+        logger.warning(f"Failed {name} token authentication attempt")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+def verify_usage_token(credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)]):
+    require_bearer_token(credentials, settings.usage_token, "usage")
+
+def verify_life_dashboard_token(credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)]):
+    require_bearer_token(credentials, settings.life_dashboard_token, "life dashboard")
 
 def usage_db_path() -> str:
     return os.path.join(settings.usage_dir, "usage_events.db")
@@ -81,6 +91,8 @@ async def lifespan(app: FastAPI):
     logger.info(f"Ensured storage directory exists at {settings.storage_dir}")
     init_usage_db()
     logger.info(f"Ensured usage database exists in {settings.usage_dir}")
+    os.makedirs(settings.health_dir, exist_ok=True)
+    logger.info(f"Ensured health directory exists at {settings.health_dir}")
     yield
     if nc.is_connected:
         logger.info("Closing NATS connection")
@@ -159,3 +171,38 @@ def ingest_usage_events(batch: Annotated[UsageEventBatch, Depends(read_usage_bat
         inserted = conn.executemany("INSERT OR IGNORE INTO usage_events (device_id, timestamp, package, event_type, class_name) VALUES (?, ?, ?, ?, ?)", rows).rowcount
     logger.info(f"Usage events from device {batch.device_id!r}: {len(rows)} received, {inserted} new")
     return {"received": len(rows), "inserted": inserted}
+
+async def read_raw_body(request: Request) -> bytes:
+    # After auth, as with read_usage_batch; awaited here so the handler can stay sync and write off the event loop
+    return await request.body()
+
+def is_test_ping(body: bytes) -> bool:
+    if len(body) > MAX_PING_BYTES:
+        return False
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(payload, dict) and payload.get("test") is True
+
+def store_health_payload(body: bytes) -> str:
+    day_dir = os.path.join(settings.health_dir, datetime.now(UTC).date().isoformat())
+    os.makedirs(day_dir, exist_ok=True)
+    path = os.path.join(day_dir, f"{hashlib.sha256(body).hexdigest()}.json")
+    tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(body)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    return path
+
+@app.post("/life-dashboard", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verify_life_dashboard_token)])
+def ingest_life_dashboard(body: Annotated[bytes, Depends(read_raw_body)]):
+    if is_test_ping(body):
+        logger.info("Life dashboard test ping received, nothing stored")
+        return
+    path = store_health_payload(body)
+    logger.info(f"Life dashboard payload of {len(body)} bytes stored as {path}")
